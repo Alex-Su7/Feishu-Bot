@@ -1,31 +1,32 @@
-import requests
 import json
+import requests
 import openai
 from lark_oapi import EventDispatcherHandler, ws, JSON, im, LogLevel
 
-# 代理配置
-proxies = {
-    '填入代理地址',
-    '填入代理地址'
-}
+ProcessedMessages = set()
+# 读取配置文件
+with open("config.json", "r") as file:
+    config = json.load(file)
+
+openai.api_key = config['OPENAI_API_KEY']
+APP_ID = config['APP_ID']
+APP_SECRET = config['APP_SECRET']
+PROXIES = config['PROXIES']
 
 class FeishuConfig:
     '''飞书API的配置信息'''
-    APP_ID = '输入飞书APP_id'
-    APP_SECRET = '输入飞书APP_id'
-    # 增加代理设置
-    PROXIES = proxies
+    APP_ID = config['APP_ID']
+    APP_SECRET = config['APP_SECRET']
+    PROXIES = config['PROXIES']
 
 class FeishuApi:
     '''FeishuApi类用于处理与飞书API的交互'''
     TOKEN_URL = 'https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal'
-    REPLY_MESSAGE_URL_TEMPLATE = 'https://open.feishu.cn/open-apis/im/v1/messages/{message_id}/reply'
     HEADERS = {'Content-Type': 'application/json; charset=utf-8'}
-    OPENAI_API_KEY = '输入OpenAI Key'
+    OPENAI_API_KEY = config['OPENAI_API_KEY']
 
     def __init__(self):
         self.session = requests.Session()
-        # 应用代理设置
         self.session.proxies.update(FeishuConfig.PROXIES)
         self.token = self.get_token()
         openai.api_key = self.OPENAI_API_KEY
@@ -36,6 +37,8 @@ class FeishuApi:
         response = self.session.post(self.TOKEN_URL, headers=self.HEADERS, json=data)
         response.raise_for_status()
         return response.json().get('tenant_access_token')
+    
+    REPLY_MESSAGE_URL_TEMPLATE = 'https://open.feishu.cn/open-apis/im/v1/messages/{message_id}/reply'
 
 
     def reply_message(self, message_id, user_id, message):
@@ -58,8 +61,8 @@ class FeishuApi:
             response.raise_for_status()
             return response.json()
         except requests.exceptions.HTTPError as e:
-            print(f"Failed to send message: {response.text}")
-            raise e
+            print(f"Failed to send message: {e}")
+            return None
 
     def generate_reply_with_chatgpt(self, message):
         '''使用ChatGPT模型生成回复'''
@@ -67,12 +70,41 @@ class FeishuApi:
             response = openai.ChatCompletion.create(
                 model="gpt-4-turbo",
                 messages=[{"role": "system", "content": "You are a helpful assistant."},
-                          {"role": "user", "content": message}]
+                            {"role": "user", "content": message}]
             )
             return response['choices'][0]['message']['content'].strip()
         except Exception as e:
             print(f"Error during OpenAI API call: {e}")
             return "抱歉，我无法现在提供回答。"
+
+# 调用DALL·E 3生成图片的函数
+def generate_image(description):
+    response = openai.Image.create(
+        model="dall-e-3",
+        prompt=description,
+        n=1,
+        size="1024x1024"
+    )
+    # 假设图片数据以base64编码返回
+    return response['data'][0]['url']
+
+# 发送图片到飞书的函数
+def send_image_to_feishu(image_url, chat_id):
+    feishu_api = FeishuApi()
+    token = feishu_api.get_token()
+    headers = {
+        'Authorization': f'Bearer {token}',
+        'Content-Type': 'application/json',
+    }
+    data = {
+        "chat_id": chat_id,
+        "msg_type": "image",
+        "content": {
+            "image_key": image_url
+        }
+    }
+    response = requests.post('https://open.feishu.cn/open-apis/im/v1/messages', headers=headers, json=data)
+    return response.json()
 
 # 模拟数据库表，用于存储对话历史和已处理的消息ID
 MsgTable = {}
@@ -100,38 +132,52 @@ def handle_p2_im_message(data: im.v1.P2ImMessageReceiveV1):
     data_dict = json.loads(JSON.marshal(data))
     message_id = data_dict["event"]["message"]["message_id"]
     
-    # 防止对同一个message_id的重复处理
     if message_id in ProcessedMessages:
         print(f"Message {message_id} already handled, skipping.")
         return
-    else:
-        ProcessedMessages.add(message_id)
 
     print(f"Handling message event: {data.header.event_id}")
     
-    # 检查消息是否提及了机器人，只有在提及的情况下才回复
     event = data_dict.get('event', {})
     message = event.get('message', {})
+    content = eval(message.get('content', '{}')).get("text", "")
+    content = content.replace('"}', '').strip()
+    chat_id = event.get('message', {}).get('chat_id', '')
+
+    if content.startswith('/p '):
+        description = content[3:]  # 获取描述文字
+        try:
+            image_url = generate_image(description)  # 尝试生成图片
+            send_image_to_feishu(image_url, chat_id)  # 尝试发送图片到飞书
+            ProcessedMessages.add(message_id)  # 只有成功发送后才标记为已处理
+            print(f"Image sent successfully to {chat_id}")
+        except Exception as e:
+            print(f"Failed to process image command: {e}")
+        return  # 处理完图片指令后返回
+
+    # 检查消息是否提及了机器人，只有在提及的情况下才回复
     mentions = message.get('mentions', [])
     is_bot_mentioned = any(mention.get('key') == '@_user_1' for mention in mentions)
-    
     if not is_bot_mentioned and message.get('chat_type') == 'group':
         # 如果不是群聊中提及机器人的消息，则不处理
         print(f"Bot was not mentioned in group chat message {message_id}, skipping.")
         return
     
-    content = eval(message.get('content', '{}')).get("text", "")
-    content = content.replace('"}', '').strip()
-    
-    # 如果机器人被提及，或者在私聊中，才继续处理消息
     user_id = data_dict["event"]["sender"]["sender_id"]["user_id"]
     session_id = f"{user_id}_{message_id}"  # 简化的会话ID
 
     feishu = FeishuApi()
     prompt = build_prompt(session_id, content)
-    chatgpt_reply = feishu.generate_reply_with_chatgpt(prompt)
-    feishu.reply_message(message_id=message_id, user_id=user_id, message=f'ChatGPT回复:{chatgpt_reply}')
-    save_conversation(session_id, content, chatgpt_reply)
+    try:
+        chatgpt_reply = feishu.generate_reply_with_chatgpt(prompt)
+        if chatgpt_reply:
+            feishu.reply_message(message_id=message_id, user_id=user_id, message=f'ChatGPT回复:{chatgpt_reply}')
+        else:
+            feishu.reply_message(message_id=message_id, user_id=user_id, message='无法生成回复，请稍后再试。')
+    except Exception as e:
+        print(f"Failed to generate or send reply: {e}")
+    save_conversation(session_id, content, chatgpt_reply if chatgpt_reply else "Failed to generate reply.")
+
 
 def main():
     '''启动飞书长连接 WebSocket客户端'''
