@@ -1,9 +1,9 @@
 {
-    "APP_ID": "cli_a5081c1a0127d013",
-    "APP_SECRET": "zCaVVGIBWahS9O9RmcuuIcSM2LtkCebS",
-    "OPENAI_API_KEY": "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",
+    "APP_ID": "你的飞书APP_ID",
+    "APP_SECRET": "你的飞书APP_SECRET",
+    "OPENAI_API_KEY": "你的OPENAI_API_KEY",
     "PROXIES": {
-        "http": "socks5h://localhost:10808",
-        "https": "socks5h://localhost:10808"
+        "代理地址",
+        "代理地址"
     }
 }
