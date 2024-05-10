@@ -5,14 +5,14 @@ from lark_oapi import EventDispatcherHandler, ws, JSON, im, LogLevel
 
 # 代理配置
 proxies = {
-    'http': 'socks5h://localhost:10808',
-    'https': 'socks5h://localhost:10808'
+    '填入代理地址',
+    '填入代理地址'
 }
 
 class FeishuConfig:
     '''飞书API的配置信息'''
-    APP_ID = 'cli_a5081c1a0127d013'
-    APP_SECRET = 'zCaVVGIBWahS9O9RmcuuIcSM2LtkCebS'
+    APP_ID = '输入飞书APP_id'
+    APP_SECRET = '输入飞书APP_id'
     # 增加代理设置
     PROXIES = proxies
 
@@ -21,7 +21,7 @@ class FeishuApi:
     TOKEN_URL = 'https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal'
     REPLY_MESSAGE_URL_TEMPLATE = 'https://open.feishu.cn/open-apis/im/v1/messages/{message_id}/reply'
     HEADERS = {'Content-Type': 'application/json; charset=utf-8'}
-    OPENAI_API_KEY = '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'
+    OPENAI_API_KEY = '输入OpenAI Key'
 
     def __init__(self):
         self.session = requests.Session()
